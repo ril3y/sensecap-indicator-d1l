@@ -42,17 +42,21 @@ Develop custom firmware for the SenseCAP Indicator D1L that enables full hardwar
 | Bluetooth LE | Internal | P1 | 🔴 Not Started |
 | LCD Backlight | GPIO45 | P2 | ✅ Complete |
 
-### 2.2 RP2040 (Sensor Hub)
-| Component | Interface | Priority | Status |
-|-----------|-----------|----------|--------|
-| UART to ESP32 | GP16/17 | P0 | 🔴 Not Started |
-| Sensor Power Control | GP18 | P0 | 🔴 Not Started |
-| AHT20 (Temp/Humidity) | I2C 0x38 | P1 | 🔴 Not Started |
-| SGP40 (TVOC) | I2C 0x59 | P1 | 🔴 Not Started |
-| SCD41 (CO2) | I2C 0x62 | P1 | 🔴 Not Started |
-| Buzzer | GP19 PWM | P1 | 🔴 Not Started |
-| SD Card | SPI1 | P2 | 🔴 Not Started |
-| Grove ADC | GP26/27 | P2 | 🔴 Not Started |
+### 2.2 RP2040 (Peripheral Controller)
+
+**Note:** The D1L model does NOT have onboard environmental sensors (AHT20, SGP40, SCD41).
+Those sensors are only on D1S and D1Pro models. The D1L RP2040 handles SD card, buzzer, and Grove expansion.
+
+| Component | Interface | Priority | Status | D1L |
+|-----------|-----------|----------|--------|-----|
+| UART to ESP32 | GP16/17 | P0 | 🔴 Not Started | ✓ |
+| Buzzer | GP19 PWM | P1 | ✅ Complete | ✓ |
+| SD Card | SPI1 | P2 | 🔴 Not Started | ✓ |
+| Grove ADC | GP26/27 | P2 | 🔴 Not Started | ✓ |
+| Sensor Power Control | GP18 | P1 | N/A | ✗ |
+| AHT20 (Temp/Humidity) | I2C 0x38 | P1 | N/A | ✗ |
+| SGP40 (TVOC) | I2C 0x59 | P1 | N/A | ✗ |
+| SCD41 (CO2) | I2C 0x62 | P1 | N/A | ✗ |
 
 ---
 

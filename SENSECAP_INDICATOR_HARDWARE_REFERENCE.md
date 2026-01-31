@@ -4,6 +4,24 @@
 
 ---
 
+## Model Variants
+
+| Feature | D1 | D1S | D1L | D1Pro |
+|---------|:--:|:---:|:---:|:-----:|
+| tVOC Sensor (SGP40) | ✗ | ✓ | ✗ | ✓ |
+| CO2 Sensor (SCD41) | ✗ | ✓ | ✗ | ✓ |
+| Temp/Humidity (AHT20) | ✗ | ✓ | ✗ | ✓ |
+| LoRa (SX1262) | ✗ | ✗ | ✓ | ✓ |
+| Wi-Fi | ✓ | ✓ | ✓ | ✓ |
+| Bluetooth | ✓ | ✓ | ✓ | ✓ |
+| SD Card | ✓ | ✓ | ✓ | ✓ |
+| Buzzer | ✓ | ✓ | ✓ | ✓ |
+| Grove ADC | ✓ | ✓ | ✓ | ✓ |
+
+**This document covers the D1L model** - LoRa-enabled variant without onboard environmental sensors.
+
+---
+
 ## Table of Contents
 
 1. [System Overview](#system-overview)
