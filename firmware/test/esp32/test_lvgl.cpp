@@ -32,6 +32,16 @@
 // IO Expander pin assignments
 #define IOEXP_LCD_CS    4   // P04
 #define IOEXP_LCD_RST   5   // P05
+#define IOEXP_TP_INT    6   // P06 - Touch interrupt
+#define IOEXP_TP_RST    7   // P07 - Touch reset
+
+// FT6336U Touch Controller
+#define FT6336U_ADDR    0x48  // Touch controller I2C address
+#define FT_REG_TD_STATUS 0x02  // Number of touch points
+#define FT_REG_P1_XH     0x03  // Point 1 X high + event
+#define FT_REG_P1_XL     0x04  // Point 1 X low
+#define FT_REG_P1_YH     0x05  // Point 1 Y high + ID
+#define FT_REG_P1_YL     0x06  // Point 1 Y low
 
 // Backlight pin
 #define GFX_BL 45
@@ -63,22 +73,48 @@
 #define LCD_B4  11
 
 // LVGL buffer configuration
-// Larger buffer reduces tearing, uses more RAM
-#define LVGL_BUFFER_LINES 80  // Number of lines per buffer (uses ~76KB each)
+// Full screen buffer for clean refresh (requires PSRAM)
+#define LVGL_BUFFER_LINES 480  // Full screen height (uses ~460KB in PSRAM)
 
 // Global objects
 static Arduino_ESP32RGBPanel *rgbpanel = nullptr;
 static Arduino_RGB_Display *gfx = nullptr;
 static lv_disp_draw_buf_t draw_buf;
 static lv_disp_drv_t disp_drv;
+static lv_indev_drv_t indev_drv;
 static lv_color_t *buf1 = nullptr;
 static lv_color_t *buf2 = nullptr;
+
+// LCD framebuffer pointer for direct access (zero-copy optimization)
+static uint16_t *lcd_framebuffer = nullptr;
 
 // Cached IO expander port0 value
 static uint8_t ioexp_port0_cache = 0xFF;
 
 // LVGL tick timer
 static unsigned long lvgl_last_tick = 0;
+
+// Touch state
+static bool touch_detected = false;
+static int16_t touch_last_x = 0;
+static int16_t touch_last_y = 0;
+
+// Animation state
+static bool animation_running = false;
+static lv_obj_t *gauge_meter = nullptr;
+static lv_meter_scale_t *gauge_scale = nullptr;
+static lv_meter_indicator_t *gauge_needle_indic = nullptr;
+static lv_meter_indicator_t *gauge_arc_indic = nullptr;
+static lv_obj_t *fps_label = nullptr;
+static lv_obj_t *start_stop_btn = nullptr;
+static lv_obj_t *start_stop_label = nullptr;
+static int32_t gauge_value = 0;
+static int32_t gauge_direction = 5;  // Speed of needle movement
+
+// FPS calculation
+static unsigned long fps_last_time = 0;
+static uint32_t fps_frame_count = 0;
+static float current_fps = 0;
 
 //=============================================================================
 // IO Expander Helper Functions
@@ -303,15 +339,131 @@ void st7701_init(void) {
 // LVGL Display Driver Callback
 //=============================================================================
 
+// Debug: track flush timing
+static unsigned long flush_total_us = 0;
+static uint32_t flush_count = 0;
+static uint32_t flush_pixels = 0;
+static unsigned long last_flush_print = 0;
+
 void lvgl_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
+    unsigned long start = micros();
+
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 
-    // Use Arduino_GFX to draw the buffer
-    gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)color_p, w, h);
+    if (lcd_framebuffer != nullptr) {
+        // Direct partial update - LVGL handles rotation via sw_rotate
+        uint16_t *src = (uint16_t *)color_p;
+        uint16_t *dst = lcd_framebuffer + (area->y1 * SCREEN_WIDTH + area->x1);
 
-    // Notify LVGL that flushing is done
+        for (uint32_t y = 0; y < h; y++) {
+            memcpy(dst, src, w * sizeof(uint16_t));
+            src += w;
+            dst += SCREEN_WIDTH;
+        }
+    } else {
+        gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)color_p, w, h);
+    }
+
+    unsigned long elapsed = micros() - start;
+    flush_total_us += elapsed;
+    flush_count++;
+    flush_pixels += w * h;
+
+    // Print timing every second
+    unsigned long now = millis();
+    if (now - last_flush_print >= 1000) {
+        Serial.printf("[FLUSH] %u/sec, %lu us avg, %uK px\n",
+                      flush_count, flush_count > 0 ? flush_total_us / flush_count : 0,
+                      flush_pixels / 1000);
+        flush_total_us = 0;
+        flush_count = 0;
+        flush_pixels = 0;
+        last_flush_print = now;
+    }
+
     lv_disp_flush_ready(disp);
+}
+
+//=============================================================================
+// Touch Controller Functions
+//=============================================================================
+
+bool ft6336u_read_touch(int16_t *x, int16_t *y) {
+    uint8_t buf[5];
+
+    Wire.beginTransmission(FT6336U_ADDR);
+    Wire.write(FT_REG_TD_STATUS);
+    if (Wire.endTransmission(false) != 0) {
+        return false;
+    }
+
+    Wire.requestFrom((uint8_t)FT6336U_ADDR, (uint8_t)5);
+    for (int i = 0; i < 5 && Wire.available(); i++) {
+        buf[i] = Wire.read();
+    }
+
+    uint8_t num_points = buf[0] & 0x0F;
+    if (num_points == 0 || num_points > 2) {
+        return false;
+    }
+
+    // Extract coordinates (12-bit values)
+    *x = ((buf[1] & 0x0F) << 8) | buf[2];
+    *y = ((buf[3] & 0x0F) << 8) | buf[4];
+
+    return true;
+}
+
+void ft6336u_reset(void) {
+    ioexp_set_pin_output(IOEXP_TP_RST);
+    ioexp_write_pin(IOEXP_TP_RST, LOW);
+    delay(10);
+    ioexp_write_pin(IOEXP_TP_RST, HIGH);
+    delay(300);
+}
+
+bool ft6336u_init(void) {
+    ft6336u_reset();
+
+    Wire.beginTransmission(FT6336U_ADDR);
+    if (Wire.endTransmission() == 0) {
+        Serial.printf("[TOUCH] FT6336U detected at 0x%02X\n", FT6336U_ADDR);
+        return true;
+    }
+    Serial.println("[TOUCH] FT6336U not detected");
+    return false;
+}
+
+//=============================================================================
+// LVGL Touch Input Callback
+//=============================================================================
+
+void lvgl_touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+    int16_t x, y;
+
+    if (ft6336u_read_touch(&x, &y)) {
+        // Touch detected - apply 180° rotation to match display
+        int16_t rx = SCREEN_WIDTH - 1 - x;
+        int16_t ry = SCREEN_HEIGHT - 1 - y;
+
+        // Clamp to screen bounds
+        if (rx < 0) rx = 0;
+        if (rx >= SCREEN_WIDTH) rx = SCREEN_WIDTH - 1;
+        if (ry < 0) ry = 0;
+        if (ry >= SCREEN_HEIGHT) ry = SCREEN_HEIGHT - 1;
+
+        data->state = LV_INDEV_STATE_PRESSED;
+        data->point.x = rx;
+        data->point.y = ry;
+        touch_last_x = rx;
+        touch_last_y = ry;
+    } else {
+        // No touch
+        data->state = LV_INDEV_STATE_RELEASED;
+        data->point.x = touch_last_x;
+        data->point.y = touch_last_y;
+    }
 }
 
 //=============================================================================
@@ -367,13 +519,23 @@ bool init_hardware(void) {
         1, 10, 8, 50,   // hsync: polarity, front_porch, pulse_width, back_porch
         1, 10, 8, 20);  // vsync: polarity, front_porch, pulse_width, back_porch
 
-    gfx = new Arduino_RGB_Display(SCREEN_WIDTH, SCREEN_HEIGHT, rgbpanel, 2, true);
+    // Rotation 0 for direct framebuffer access (no coordinate transformation needed)
+    // Touch coordinates are adjusted in lvgl_touch_read() to compensate
+    gfx = new Arduino_RGB_Display(SCREEN_WIDTH, SCREEN_HEIGHT, rgbpanel, 0, true);
 
     if (!gfx->begin()) {
         Serial.println("[ERROR] RGB display init failed");
         return false;
     }
     Serial.printf("[OK] RGB display: %dx%d\n", gfx->width(), gfx->height());
+
+    // Get direct framebuffer pointer for zero-copy LVGL rendering
+    lcd_framebuffer = (uint16_t *)gfx->getFramebuffer();
+    if (lcd_framebuffer != nullptr) {
+        Serial.printf("[OK] LCD framebuffer: 0x%08X (direct access enabled)\n", (uint32_t)lcd_framebuffer);
+    } else {
+        Serial.println("[WARN] LCD framebuffer not available, using slow path");
+    }
 
     // Enable backlight
     pinMode(GFX_BL, OUTPUT);
@@ -382,6 +544,9 @@ bool init_hardware(void) {
 
     // Clear screen
     gfx->fillScreen(BLACK);
+
+    // Initialize touch controller
+    touch_detected = ft6336u_init();
 
     return true;
 }
@@ -395,26 +560,37 @@ bool init_lvgl(void) {
 
     lv_init();
 
-    // Allocate draw buffers from PSRAM if available
+    // Buffer allocation strategy:
+    // Use PSRAM double buffers - LVGL draws to PSRAM, then we copy to LCD framebuffer.
+    // This avoids tearing (drawing to active display buffer) and allows rotation handling.
+    // Zero-copy mode was removed because it caused tearing and orientation issues.
+
     size_t buf_size = SCREEN_WIDTH * LVGL_BUFFER_LINES * sizeof(lv_color_t);
-    Serial.printf("[LVGL] Allocating %d bytes per buffer\n", buf_size);
+    Serial.printf("[LVGL] Buffer size: %d bytes\n", buf_size);
 
+    // Allocate both buffers from PSRAM for double buffering
     buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf1) {
-        // Fallback to internal RAM
-        buf1 = (lv_color_t *)malloc(buf_size);
-    }
-
     buf2 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf2) {
-        buf2 = (lv_color_t *)malloc(buf_size);
-    }
 
     if (!buf1 || !buf2) {
-        Serial.println("[ERROR] Failed to allocate LVGL buffers");
+        Serial.println("[WARN] PSRAM double buffer failed, trying single buffer");
+        if (buf1) heap_caps_free(buf1);
+        if (buf2) heap_caps_free(buf2);
+        buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        buf2 = NULL;
+    }
+
+    if (!buf1) {
+        Serial.println("[WARN] PSRAM allocation failed, trying internal RAM");
+        buf1 = (lv_color_t *)malloc(buf_size);
+        buf2 = NULL;
+    }
+
+    if (!buf1) {
+        Serial.println("[ERROR] Failed to allocate LVGL buffer");
         return false;
     }
-    Serial.println("[OK] LVGL buffers allocated");
+    Serial.printf("[OK] LVGL buffer(s) allocated (double: %s)\n", buf2 ? "yes" : "no");
 
     // Initialize display buffer
     lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * LVGL_BUFFER_LINES);
@@ -425,9 +601,21 @@ bool init_lvgl(void) {
     disp_drv.ver_res = SCREEN_HEIGHT;
     disp_drv.flush_cb = lvgl_disp_flush;
     disp_drv.draw_buf = &draw_buf;
+    disp_drv.full_refresh = 0;  // Partial refresh - only update changed areas
+    disp_drv.sw_rotate = 1;     // Enable software rotation
+    disp_drv.rotated = LV_DISP_ROT_180;  // 180 degree rotation
     lv_disp_drv_register(&disp_drv);
 
     Serial.println("[OK] LVGL display driver registered");
+
+    // Initialize touch input device
+    if (touch_detected) {
+        lv_indev_drv_init(&indev_drv);
+        indev_drv.type = LV_INDEV_TYPE_POINTER;
+        indev_drv.read_cb = lvgl_touch_read;
+        lv_indev_drv_register(&indev_drv);
+        Serial.println("[OK] LVGL touch input registered");
+    }
 
     return true;
 }
@@ -461,6 +649,25 @@ static void slider_event_cb(lv_event_t *e) {
     lv_obj_t *slider = lv_event_get_target(e);
     int32_t val = lv_slider_get_value(slider);
     Serial.printf("[UI] Slider value: %d\n", val);
+}
+
+static void start_stop_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+
+    if (code == LV_EVENT_CLICKED) {
+        animation_running = !animation_running;
+
+        if (start_stop_label) {
+            if (animation_running) {
+                lv_label_set_text(start_stop_label, LV_SYMBOL_PAUSE " Stop");
+                lv_obj_set_style_bg_color(start_stop_btn, lv_color_hex(0xff6b6b), 0);
+            } else {
+                lv_label_set_text(start_stop_label, LV_SYMBOL_PLAY " Start");
+                lv_obj_set_style_bg_color(start_stop_btn, lv_color_hex(0x00ff88), 0);
+            }
+        }
+        Serial.printf("[UI] Animation %s\n", animation_running ? "started" : "stopped");
+    }
 }
 
 //=============================================================================
@@ -557,21 +764,44 @@ void create_demo_ui(void) {
     lv_obj_set_style_text_font(tvoc_value, &lv_font_montserrat_32, 0);
     lv_obj_align(tvoc_value, LV_ALIGN_TOP_LEFT, 210, 120);
 
-    // Air Quality meter
-    lv_obj_t *meter = lv_meter_create(sensor_cont);
-    lv_obj_set_size(meter, 150, 150);
-    lv_obj_align(meter, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Air Quality meter (animated speedometer)
+    gauge_meter = lv_meter_create(sensor_cont);
+    lv_obj_set_size(gauge_meter, 180, 180);
+    lv_obj_align(gauge_meter, LV_ALIGN_BOTTOM_LEFT, 10, 10);
+    lv_obj_set_style_bg_color(gauge_meter, lv_color_hex(0x0f1a2e), 0);
+    lv_obj_set_style_border_color(gauge_meter, lv_color_hex(0x00ff88), 0);
+    lv_obj_set_style_border_width(gauge_meter, 2, 0);
 
-    lv_meter_scale_t *scale = lv_meter_add_scale(meter);
-    lv_meter_set_scale_ticks(meter, scale, 11, 2, 10, lv_color_hex(0x666666));
-    lv_meter_set_scale_major_ticks(meter, scale, 2, 3, 15, lv_color_hex(0xffffff), 10);
-    lv_meter_set_scale_range(meter, scale, 0, 100, 270, 135);
+    gauge_scale = lv_meter_add_scale(gauge_meter);
+    lv_meter_set_scale_ticks(gauge_meter, gauge_scale, 21, 2, 10, lv_color_hex(0x666666));
+    lv_meter_set_scale_major_ticks(gauge_meter, gauge_scale, 4, 3, 15, lv_color_hex(0xffffff), 10);
+    lv_meter_set_scale_range(gauge_meter, gauge_scale, 0, 100, 270, 135);
 
-    lv_meter_indicator_t *indic = lv_meter_add_arc(meter, scale, 10, lv_color_hex(0x00ff88), 0);
-    lv_meter_set_indicator_end_value(meter, indic, 70);
+    // Arc indicator (shows value as colored arc)
+    gauge_arc_indic = lv_meter_add_arc(gauge_meter, gauge_scale, 10, lv_color_hex(0x00ff88), 0);
+    lv_meter_set_indicator_end_value(gauge_meter, gauge_arc_indic, 0);
 
-    lv_meter_indicator_t *needle = lv_meter_add_needle_line(meter, scale, 3, lv_color_hex(0xff6b6b), -10);
-    lv_meter_set_indicator_value(meter, needle, 70);
+    // Needle indicator
+    gauge_needle_indic = lv_meter_add_needle_line(gauge_meter, gauge_scale, 4, lv_color_hex(0xff6b6b), -15);
+    lv_meter_set_indicator_value(gauge_meter, gauge_needle_indic, 0);
+
+    // Start/Stop button
+    start_stop_btn = lv_btn_create(sensor_cont);
+    lv_obj_set_size(start_stop_btn, 110, 45);
+    lv_obj_align(start_stop_btn, LV_ALIGN_BOTTOM_RIGHT, -30, -50);
+    lv_obj_set_style_bg_color(start_stop_btn, lv_color_hex(0x00ff88), 0);
+    lv_obj_set_style_radius(start_stop_btn, 10, 0);
+    start_stop_label = lv_label_create(start_stop_btn);
+    lv_label_set_text(start_stop_label, LV_SYMBOL_PLAY " Start");
+    lv_obj_center(start_stop_label);
+    lv_obj_add_event_cb(start_stop_btn, start_stop_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // FPS counter label
+    fps_label = lv_label_create(sensor_cont);
+    lv_label_set_text(fps_label, "FPS: --");
+    lv_obj_set_style_text_color(fps_label, lv_color_hex(0xffe66d), 0);
+    lv_obj_set_style_text_font(fps_label, &lv_font_montserrat_18, 0);
+    lv_obj_align(fps_label, LV_ALIGN_BOTTOM_RIGHT, -30, -10);
 
     //=========================================================================
     // TAB 2: Settings
@@ -761,6 +991,7 @@ void setup() {
     create_demo_ui();
 
     lvgl_last_tick = millis();
+    fps_last_time = millis();  // Initialize FPS timer
 
     Serial.println("\n[OK] Setup complete - LVGL running\n");
 }
@@ -771,8 +1002,53 @@ void loop() {
     lv_tick_inc(now - lvgl_last_tick);
     lvgl_last_tick = now;
 
+    // FPS calculation
+    fps_frame_count++;
+    if (now - fps_last_time >= 1000) {
+        current_fps = fps_frame_count * 1000.0f / (now - fps_last_time);
+        fps_last_time = now;
+        fps_frame_count = 0;
+
+        // Update FPS label
+        if (fps_label) {
+            static char fps_buf[16];
+            snprintf(fps_buf, sizeof(fps_buf), "FPS: %.1f", current_fps);
+            lv_label_set_text(fps_label, fps_buf);
+        }
+    }
+
+    // Animate gauge if running
+    if (animation_running && gauge_meter && gauge_needle_indic && gauge_arc_indic) {
+        gauge_value += gauge_direction;
+
+        // Bounce at limits
+        if (gauge_value >= 100) {
+            gauge_value = 100;
+            gauge_direction = -5;
+        } else if (gauge_value <= 0) {
+            gauge_value = 0;
+            gauge_direction = 5;
+        }
+
+        // Update meter indicators
+        lv_meter_set_indicator_value(gauge_meter, gauge_needle_indic, gauge_value);
+        lv_meter_set_indicator_end_value(gauge_meter, gauge_arc_indic, gauge_value);
+
+        // Change arc color based on value (green -> yellow -> red)
+        lv_color_t arc_color;
+        if (gauge_value < 33) {
+            arc_color = lv_color_hex(0x00ff88);  // Green
+        } else if (gauge_value < 66) {
+            arc_color = lv_color_hex(0xffe66d);  // Yellow
+        } else {
+            arc_color = lv_color_hex(0xff6b6b);  // Red
+        }
+        lv_meter_set_indicator_start_value(gauge_meter, gauge_arc_indic, 0);
+    }
+
     // Run LVGL task handler
     lv_timer_handler();
 
-    delay(5);  // ~200 fps maximum
+    // Yield to other tasks
+    yield();
 }

@@ -48,10 +48,10 @@
  *====================*/
 
 /* Default display refresh period in milliseconds */
-#define LV_DISP_DEF_REFR_PERIOD 16  /* ~60 fps */
+#define LV_DISP_DEF_REFR_PERIOD 10  /* ~100 fps target */
 
 /* Input device read period in milliseconds */
-#define LV_INDEV_DEF_READ_PERIOD 30
+#define LV_INDEV_DEF_READ_PERIOD 10  /* Faster touch polling */
 
 /* Use a custom tick source */
 #define LV_TICK_CUSTOM 0
