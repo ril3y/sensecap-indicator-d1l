@@ -38,7 +38,7 @@ Develop custom firmware for the SenseCAP Indicator D1L that enables full hardwar
 | Touch Panel (FT6336U) | I2C 0x48 | P1 | ✅ Complete |
 | SX1262 LoRa Radio | SPI + IO Exp | P1 | 🔴 Not Started |
 | User Button | GPIO38 | P1 | ✅ Complete |
-| WiFi | Internal | P1 | 🔴 Not Started |
+| WiFi | Internal | P1 | ✅ Complete |
 | Bluetooth LE | Internal | P1 | 🔴 Not Started |
 | LCD Backlight | GPIO45 | P2 | ✅ Complete |
 
