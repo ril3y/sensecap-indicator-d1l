@@ -26,7 +26,8 @@ firmware/
     │   ├── test_wifi.cpp          # WiFi connectivity test
     │   ├── test_io_expander.cpp   # TCA9535 IO expander test
     │   ├── test_uart_rp2040.cpp   # UART to RP2040 test
-    │   └── test_esp32_rp2040.cpp  # Soundboard UI (buzzer control)
+    │   ├── test_esp32_rp2040.cpp  # Soundboard UI (buzzer control)
+    │   └── test_lora.cpp          # SX1262 LoRa packet scanner
     └── rp2040/             # RP2040 test/demo applications
         ├── rp2040_d1l.cpp         # D1L firmware (SD, buzzer, Grove)
         ├── test_rp2040_full.cpp   # D1S/D1Pro firmware (with sensors)
@@ -84,7 +85,7 @@ pio device monitor -p COM59   # RP2040
 | `esp32s3_test_wifi` | WiFi with on-screen keyboard | ✅ Working |
 | `esp32s3_test_ioexp` | TCA9535 IO expander | ✅ Working |
 | `esp32s3_rp2040_soundboard` | Buzzer control via UART | ✅ Working |
-| `esp32s3_test_lora` | SX1262 LoRa radio | 🔴 Not Started |
+| `esp32s3_test_lora` | SX1262 LoRa packet scanner | ✅ Working |
 
 ### RP2040 Tests
 
