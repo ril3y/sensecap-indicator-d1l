@@ -35,6 +35,7 @@
 #define SD_MOSI         11
 #define SD_MISO         12
 #define SD_CS           13
+#define SD_DET          7   // Card detect (active low when card inserted)
 
 // I2C (Grove expansion)
 #define I2C_SDA         20
@@ -52,6 +53,28 @@
 
 bool sd_ok = false;
 int buzzer_volume = 100;  // 0-100%, controls PWM duty cycle
+bool sd_card_last_state = false;  // Track SD card insert/remove
+
+// Note frequencies (octave 4)
+#define NOTE_C4  262
+#define NOTE_CS4 277
+#define NOTE_D4  294
+#define NOTE_DS4 311
+#define NOTE_E4  330
+#define NOTE_F4  349
+#define NOTE_FS4 370
+#define NOTE_G4  392
+#define NOTE_GS4 415
+#define NOTE_A4  440
+#define NOTE_AS4 466
+#define NOTE_B4  494
+#define NOTE_C5  523
+#define NOTE_D5  587
+#define NOTE_E5  659
+#define NOTE_F5  698
+#define NOTE_G5  784
+#define NOTE_A5  880
+#define NOTE_REST 0
 
 //=============================================================================
 // EEPROM Settings
@@ -114,6 +137,75 @@ void buzz_beep(int n, int freq, int on_ms, int off_ms) {
 void buzz_off() {
     analogWrite(BUZZER_PIN, 0);
     noTone(BUZZER_PIN);
+}
+
+// Parse note name to frequency (e.g., "C4", "A#5", "Gb4")
+int note_to_freq(const char* note) {
+    if (!note || !*note) return 0;
+
+    // Base frequencies for octave 4
+    int base_freqs[] = {262, 294, 330, 349, 392, 440, 494}; // C D E F G A B
+
+    char n = toupper(note[0]);
+    if (n == 'R' || n == '-') return 0;  // Rest
+
+    int idx = -1;
+    if (n >= 'A' && n <= 'G') {
+        int map[] = {5, 6, 0, 1, 2, 3, 4};  // A=5, B=6, C=0, D=1, E=2, F=3, G=4
+        idx = map[n - 'A'];
+    }
+    if (idx < 0) return 0;
+
+    int freq = base_freqs[idx];
+    int pos = 1;
+
+    // Check for sharp/flat
+    if (note[pos] == '#' || note[pos] == 's') {
+        freq = freq * 1059 / 1000;  // ~semitone up
+        pos++;
+    } else if (note[pos] == 'b') {
+        freq = freq * 944 / 1000;   // ~semitone down
+        pos++;
+    }
+
+    // Check for octave (default 4)
+    int octave = 4;
+    if (note[pos] >= '1' && note[pos] <= '8') {
+        octave = note[pos] - '0';
+    }
+
+    // Adjust for octave
+    while (octave < 4) { freq /= 2; octave++; }
+    while (octave > 4) { freq *= 2; octave--; }
+
+    return freq;
+}
+
+// Play a sequence of notes: "C4:100 D4:100 E4:200" (note:duration_ms)
+void play_notes(const char* sequence) {
+    char buf[128];
+    strncpy(buf, sequence, sizeof(buf)-1);
+    buf[sizeof(buf)-1] = '\0';
+
+    char* token = strtok(buf, " ");
+    while (token) {
+        char* colon = strchr(token, ':');
+        int duration = 100;  // Default 100ms
+        if (colon) {
+            *colon = '\0';
+            duration = atoi(colon + 1);
+        }
+
+        int freq = note_to_freq(token);
+        if (freq > 0) {
+            buzz_tone(freq, duration);
+        } else {
+            delay(duration);  // Rest
+        }
+        delay(10);  // Small gap between notes
+
+        token = strtok(NULL, " ");
+    }
 }
 
 void buzz_melody(const char* name) {
@@ -207,6 +299,19 @@ void buzz_melody(const char* name) {
         buzz_tone(600, 200); delay(150);
         buzz_tone(600, 200);
     }
+    // === SD Card Events ===
+    else if (strcmp(name, "sdin") == 0) {
+        // SD card inserted - pleasant rising tone
+        buzz_tone(800, 50); delay(40);
+        buzz_tone(1200, 50); delay(40);
+        buzz_tone(1600, 80);
+    }
+    else if (strcmp(name, "sdout") == 0) {
+        // SD card removed - falling tone
+        buzz_tone(1200, 50); delay(40);
+        buzz_tone(800, 50); delay(40);
+        buzz_tone(500, 80);
+    }
     // === Errors/Alerts ===
     else if (strcmp(name, "err") == 0) {
         // Error
@@ -244,7 +349,15 @@ void buzz_melody(const char* name) {
 // SD Card
 //=============================================================================
 
+bool sd_card_inserted() {
+    return digitalRead(SD_DET) == LOW;  // Active low
+}
+
 bool sd_init() {
+    if (!sd_card_inserted()) {
+        sd_ok = false;
+        return false;
+    }
     SPI1.setRX(SD_MISO);
     SPI1.setTX(SD_MOSI);
     SPI1.setSCK(SD_SCK);
@@ -410,12 +523,14 @@ void cmd_help() {
     out->println("  beep [n] [freq] [ms]  - Beep n times");
     out->println("  tone <freq> <ms>      - Play tone");
     out->println("  melody <name>         - Play sound (see list below)");
+    out->println("  note <N> [ms]         - Play note (e.g., C4, A#5, Gb3)");
+    out->println("  play <notes>          - Play sequence: C4:100 D4:100 E4:200");
     out->println("  vol [0-100]           - Get/set volume %");
     out->println("  quiet                 - Stop sound");
     out->println("  Melodies: tick,click,key,enter,back (UI feedback)");
     out->println("            pip,blip,ack,ok,no (short)");
     out->println("            msg,msg2,dm,sent (messages)");
-    out->println("            conn,disc,boot,low (status)");
+    out->println("            conn,disc,boot,low,sdin,sdout (status)");
     out->println("            err,warn,alert,sos (alerts)");
     out->println();
     out->println("SD Card:");
@@ -484,6 +599,41 @@ void process_cmd(char* cmd) {
     else if (strcmp(cmd, "quiet") == 0) {
         buzz_off();
         out->println("OK quiet");
+    }
+    else if (strcmp(cmd, "note") == 0) {
+        if (!arg1) { out->println("ERR usage: note <N> [ms] (e.g., note C4 200)"); return; }
+        int freq = note_to_freq(arg1);
+        int ms = arg2 ? atoi(arg2) : 100;
+        if (freq > 0) {
+            buzz_tone(freq, ms);
+            out->printf("OK note %s %dHz %dms\n", arg1, freq, ms);
+        } else {
+            delay(ms);  // Rest
+            out->printf("OK rest %dms\n", ms);
+        }
+    }
+    else if (strcmp(cmd, "play") == 0) {
+        if (!arg1) { out->println("ERR usage: play <notes> (e.g., play C4:100 D4:100 E4:200)"); return; }
+        // Reconstruct the full sequence (arg1 + arg2 + arg3 were split)
+        char sequence[128];
+        strncpy(sequence, arg1, sizeof(sequence)-1);
+        sequence[sizeof(sequence)-1] = '\0';
+        // The original args were split by spaces, need to find rest from original buffer
+        // Just use arg1 position to end of line
+        char* rest = arg1;
+        while (*rest) rest++;  // Find end of arg1
+        rest++;  // Skip null
+        // Rebuild from the CLI buffer position
+        if (arg2) {
+            strncat(sequence, " ", sizeof(sequence)-strlen(sequence)-1);
+            strncat(sequence, arg2, sizeof(sequence)-strlen(sequence)-1);
+        }
+        if (arg3) {
+            strncat(sequence, " ", sizeof(sequence)-strlen(sequence)-1);
+            strncat(sequence, arg3, sizeof(sequence)-strlen(sequence)-1);
+        }
+        play_notes(sequence);
+        out->println("OK play");
     }
     else if (strcmp(cmd, "vol") == 0) {
         if (arg1) {
@@ -561,7 +711,9 @@ void process_cmd(char* cmd) {
     // System
     else if (strcmp(cmd, "status") == 0) {
         out->println("OK status");
-        out->printf("sd: %s\n", sd_ok ? "ready" : "not mounted");
+        out->printf("sd_card: %s\n", sd_card_inserted() ? "inserted" : "not inserted");
+        out->printf("sd: %s\n", sd_ok ? "mounted" : "not mounted");
+        out->printf("volume: %d%%\n", buzzer_volume);
         out->printf("uptime: %lu ms\n", millis());
     }
     else if (strcmp(cmd, "boot") == 0) {
@@ -605,6 +757,7 @@ void setup() {
     // GPIO
     pinMode(LED_PIN, OUTPUT);
     pinMode(BUZZER_PIN, OUTPUT);
+    pinMode(SD_DET, INPUT_PULLUP);  // SD card detect
     analogReadResolution(12);
 
     // Load saved settings from EEPROM
@@ -625,6 +778,7 @@ void setup() {
     Serial1.begin(UART_BAUD);
 
     // Try SD card
+    sd_card_last_state = sd_card_inserted();  // Initialize state for detection
     sd_init();
 
     // Boot notification
@@ -646,5 +800,30 @@ void loop() {
     while (Serial1.available()) {
         out = &Serial1;
         cli_char(Serial1.read());
+    }
+
+    // SD card insert/remove detection
+    static unsigned long last_sd_check = 0;
+    if (millis() - last_sd_check > 200) {  // Check every 200ms
+        last_sd_check = millis();
+        bool inserted = sd_card_inserted();
+        if (inserted != sd_card_last_state) {
+            sd_card_last_state = inserted;
+            if (inserted) {
+                Serial.println("SD card inserted");
+                Serial1.println("SD card inserted");
+                buzz_melody("sdin");
+                // Try to mount the card
+                if (sd_init()) {
+                    Serial.println("SD card mounted");
+                    Serial1.println("SD card mounted");
+                }
+            } else {
+                Serial.println("SD card removed");
+                Serial1.println("SD card removed");
+                sd_ok = false;
+                buzz_melody("sdout");
+            }
+        }
     }
 }
