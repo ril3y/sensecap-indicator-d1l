@@ -1,18 +1,23 @@
 /**
- * @file test_lvgl.cpp
- * @brief LVGL Integration Test for SenseCAP Indicator
+ * @file test_lvgl_lgfx.cpp
+ * @brief LVGL Integration Test using LovyanGFX for SenseCAP Indicator
  *
- * Tests LVGL graphics library with ST7701 480x480 RGB LCD
- * Compatible with SquareLine Studio generated UI code
+ * Uses LovyanGFX instead of Arduino_GFX for ESP-IDF 5.x compatibility
+ * and proper double buffering with vsync synchronization.
  */
 
 #include <Arduino.h>
 #include <Wire.h>
 
-// LVGL must be included before Arduino_GFX to avoid conflicts
+// LVGL must be included before LovyanGFX
 #define LV_CONF_INCLUDE_SIMPLE
 #include <lvgl.h>
-#include <Arduino_GFX_Library.h>
+
+// LovyanGFX for display
+#define LGFX_USE_V1
+#include <LovyanGFX.hpp>
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
 // Display configuration
 #define SCREEN_WIDTH  480
@@ -55,38 +60,119 @@
 #define LCD_VSYNC  17
 #define LCD_HSYNC  16
 #define LCD_PCLK   21
-#define LCD_R0  4
-#define LCD_R1  3
-#define LCD_R2  2
-#define LCD_R3  1
-#define LCD_R4  0
-#define LCD_G0  10
-#define LCD_G1  9
-#define LCD_G2  8
-#define LCD_G3  7
-#define LCD_G4  6
-#define LCD_G5  5
-#define LCD_B0  15
-#define LCD_B1  14
-#define LCD_B2  13
-#define LCD_B3  12
-#define LCD_B4  11
+#define LCD_R0  GPIO_NUM_4
+#define LCD_R1  GPIO_NUM_3
+#define LCD_R2  GPIO_NUM_2
+#define LCD_R3  GPIO_NUM_1
+#define LCD_R4  GPIO_NUM_0
+#define LCD_G0  GPIO_NUM_10
+#define LCD_G1  GPIO_NUM_9
+#define LCD_G2  GPIO_NUM_8
+#define LCD_G3  GPIO_NUM_7
+#define LCD_G4  GPIO_NUM_6
+#define LCD_G5  GPIO_NUM_5
+#define LCD_B0  GPIO_NUM_15
+#define LCD_B1  GPIO_NUM_14
+#define LCD_B2  GPIO_NUM_13
+#define LCD_B3  GPIO_NUM_12
+#define LCD_B4  GPIO_NUM_11
+
+//=============================================================================
+// LovyanGFX Display Configuration for SenseCAP Indicator ST7701S
+//=============================================================================
+
+class LGFX_SenseCAP : public lgfx::LGFX_Device {
+public:
+    // RGB Panel bus - must be public members
+    lgfx::Bus_RGB     _bus_instance;
+    lgfx::Panel_RGB   _panel_instance;
+
+    LGFX_SenseCAP(void) {
+        // Panel configuration first
+        {
+            auto cfg = _panel_instance.config();
+
+            cfg.memory_width  = SCREEN_WIDTH;
+            cfg.memory_height = SCREEN_HEIGHT;
+            cfg.panel_width   = SCREEN_WIDTH;
+            cfg.panel_height  = SCREEN_HEIGHT;
+            cfg.offset_x = 0;
+            cfg.offset_y = 0;
+
+            _panel_instance.config(cfg);
+        }
+
+        // Enable PSRAM for framebuffer
+        {
+            auto cfg = _panel_instance.config_detail();
+            cfg.use_psram = 1;
+            _panel_instance.config_detail(cfg);
+        }
+
+        // Bus configuration for ESP32-S3 RGB LCD
+        {
+            auto cfg = _bus_instance.config();
+
+            cfg.panel = &_panel_instance;
+
+            // Data pins - RGB565 format (R5 G6 B5)
+            cfg.pin_d0  = LCD_R0;   // R0
+            cfg.pin_d1  = LCD_R1;   // R1
+            cfg.pin_d2  = LCD_R2;   // R2
+            cfg.pin_d3  = LCD_R3;   // R3
+            cfg.pin_d4  = LCD_R4;   // R4
+            cfg.pin_d5  = LCD_G0;   // G0
+            cfg.pin_d6  = LCD_G1;   // G1
+            cfg.pin_d7  = LCD_G2;   // G2
+            cfg.pin_d8  = LCD_G3;   // G3
+            cfg.pin_d9  = LCD_G4;   // G4
+            cfg.pin_d10 = LCD_G5;   // G5
+            cfg.pin_d11 = LCD_B0;   // B0
+            cfg.pin_d12 = LCD_B1;   // B1
+            cfg.pin_d13 = LCD_B2;   // B2
+            cfg.pin_d14 = LCD_B3;   // B3
+            cfg.pin_d15 = LCD_B4;   // B4
+
+            cfg.pin_henable = GPIO_NUM_18;  // DE
+            cfg.pin_vsync   = GPIO_NUM_17;
+            cfg.pin_hsync   = GPIO_NUM_16;
+            cfg.pin_pclk    = GPIO_NUM_21;
+
+            // Timing parameters for ST7701S 480x480
+            cfg.freq_write = 12000000;  // 12MHz pixel clock
+
+            cfg.hsync_polarity    = 1;
+            cfg.hsync_front_porch = 10;
+            cfg.hsync_pulse_width = 8;
+            cfg.hsync_back_porch  = 50;
+
+            cfg.vsync_polarity    = 1;
+            cfg.vsync_front_porch = 10;
+            cfg.vsync_pulse_width = 8;
+            cfg.vsync_back_porch  = 20;
+
+            cfg.pclk_idle_high = 0;
+
+            _bus_instance.config(cfg);
+        }
+
+        _panel_instance.setBus(&_bus_instance);
+        setPanel(&_panel_instance);
+    }
+};
+
+// Global display instance (pointer for delayed initialization)
+static LGFX_SenseCAP *lcd = nullptr;
 
 // LVGL buffer configuration
-// Full screen buffer for clean refresh (requires PSRAM)
-#define LVGL_BUFFER_LINES 480  // Full screen height (uses ~460KB in PSRAM)
+#define LVGL_BUFFER_LINES 480  // Full screen height
 
 // Global objects
-static Arduino_ESP32RGBPanel *rgbpanel = nullptr;
-static Arduino_RGB_Display *gfx = nullptr;
 static lv_disp_draw_buf_t draw_buf;
 static lv_disp_drv_t disp_drv;
 static lv_indev_drv_t indev_drv;
 static lv_color_t *buf1 = nullptr;
 static lv_color_t *buf2 = nullptr;
-
-// LCD framebuffer pointer for direct access (zero-copy optimization)
-static uint16_t *lcd_framebuffer = nullptr;
 
 // Cached IO expander port0 value
 static uint8_t ioexp_port0_cache = 0xFF;
@@ -109,9 +195,7 @@ static lv_obj_t *fps_label = nullptr;
 static lv_obj_t *start_stop_btn = nullptr;
 static lv_obj_t *start_stop_label = nullptr;
 static int32_t gauge_value = 0;
-static int32_t gauge_direction = 2;  // Slower needle movement to reduce tearing
-static unsigned long last_gauge_update = 0;
-static const unsigned long GAUGE_UPDATE_INTERVAL = 33;  // ~30Hz update rate
+static int32_t gauge_direction = 5;
 
 // FPS calculation
 static unsigned long fps_last_time = 0;
@@ -322,7 +406,6 @@ void st7701_init(void) {
     lcd_write_data(0x60);  // RGB666 for better compatibility
 
     // MADCTL - Memory Access Control
-    // Bit 3 (0x08): BGR order. 0=RGB, 1=BGR
     lcd_write_cmd(0x36);
     lcd_write_data(0x00);  // RGB order
 
@@ -341,7 +424,7 @@ void st7701_init(void) {
 // LVGL Display Driver Callback
 //=============================================================================
 
-// Debug: track flush timing
+// Debug timing
 static unsigned long flush_total_us = 0;
 static uint32_t flush_count = 0;
 static uint32_t flush_pixels = 0;
@@ -353,30 +436,8 @@ void lvgl_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *col
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 
-    if (lcd_framebuffer != nullptr) {
-        uint16_t *src = (uint16_t *)color_p;
-
-        // Check if this is a full-screen flush (for full_refresh mode with 180° rotation)
-        if (w == SCREEN_WIDTH && h == SCREEN_HEIGHT) {
-            // Full screen: 180° rotation = reverse the entire buffer
-            // Much faster than per-pixel x,y calculation
-            uint32_t total_pixels = SCREEN_WIDTH * SCREEN_HEIGHT;
-            uint16_t *dst = lcd_framebuffer + total_pixels - 1;
-            for (uint32_t i = 0; i < total_pixels; i++) {
-                *dst-- = *src++;
-            }
-        } else {
-            // Partial update: direct copy (used when sw_rotate is enabled)
-            uint16_t *dst = lcd_framebuffer + (area->y1 * SCREEN_WIDTH + area->x1);
-            for (uint32_t y = 0; y < h; y++) {
-                memcpy(dst, src, w * sizeof(uint16_t));
-                src += w;
-                dst += SCREEN_WIDTH;
-            }
-        }
-    } else {
-        gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)color_p, w, h);
-    }
+    // Use LovyanGFX pushImage for efficient transfer
+    lcd->pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
 
     unsigned long elapsed = micros() - start;
     flush_total_us += elapsed;
@@ -456,7 +517,7 @@ void lvgl_touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     int16_t x, y;
 
     if (ft6336u_read_touch(&x, &y)) {
-        // Touch detected - apply 180° rotation to match display
+        // Touch detected - apply 180 rotation to match display
         int16_t rx = SCREEN_WIDTH - 1 - x;
         int16_t ry = SCREEN_HEIGHT - 1 - y;
 
@@ -520,43 +581,24 @@ bool init_hardware(void) {
     ioexp_write_pin(IOEXP_LCD_RST, HIGH);
     delay(150);
 
-    // Initialize ST7701
+    // Initialize ST7701 via SPI before RGB interface
     st7701_init();
 
-    // Initialize RGB panel
-    rgbpanel = new Arduino_ESP32RGBPanel(
-        LCD_DE, LCD_VSYNC, LCD_HSYNC, LCD_PCLK,
-        LCD_R0, LCD_R1, LCD_R2, LCD_R3, LCD_R4,
-        LCD_G0, LCD_G1, LCD_G2, LCD_G3, LCD_G4, LCD_G5,
-        LCD_B0, LCD_B1, LCD_B2, LCD_B3, LCD_B4,
-        1, 10, 8, 50,   // hsync: polarity, front_porch, pulse_width, back_porch
-        1, 10, 8, 20);  // vsync: polarity, front_porch, pulse_width, back_porch
-
-    // Rotation 0 for direct framebuffer access (no coordinate transformation needed)
-    // Touch coordinates are adjusted in lvgl_touch_read() to compensate
-    gfx = new Arduino_RGB_Display(SCREEN_WIDTH, SCREEN_HEIGHT, rgbpanel, 0, true);
-
-    if (!gfx->begin()) {
-        Serial.println("[ERROR] RGB display init failed");
+    // Initialize LovyanGFX (create after ST7701 init)
+    Serial.println("[LCD] Initializing LovyanGFX...");
+    lcd = new LGFX_SenseCAP();
+    if (!lcd->init()) {
+        Serial.println("[ERROR] LovyanGFX init failed");
         return false;
     }
-    Serial.printf("[OK] RGB display: %dx%d\n", gfx->width(), gfx->height());
-
-    // Get direct framebuffer pointer for zero-copy LVGL rendering
-    lcd_framebuffer = (uint16_t *)gfx->getFramebuffer();
-    if (lcd_framebuffer != nullptr) {
-        Serial.printf("[OK] LCD framebuffer: 0x%08X (direct access enabled)\n", (uint32_t)lcd_framebuffer);
-    } else {
-        Serial.println("[WARN] LCD framebuffer not available, using slow path");
-    }
+    lcd->setRotation(2);  // 180 degree rotation to match physical orientation
+    lcd->fillScreen(TFT_BLACK);
+    Serial.printf("[OK] LovyanGFX: %dx%d\n", lcd->width(), lcd->height());
 
     // Enable backlight
     pinMode(GFX_BL, OUTPUT);
     digitalWrite(GFX_BL, HIGH);
     Serial.println("[OK] Backlight enabled");
-
-    // Clear screen
-    gfx->fillScreen(BLACK);
 
     // Initialize touch controller
     touch_detected = ft6336u_init();
@@ -573,15 +615,10 @@ bool init_lvgl(void) {
 
     lv_init();
 
-    // Buffer allocation strategy:
-    // Use PSRAM double buffers - LVGL draws to PSRAM, then we copy to LCD framebuffer.
-    // This avoids tearing (drawing to active display buffer) and allows rotation handling.
-    // Zero-copy mode was removed because it caused tearing and orientation issues.
-
+    // Allocate full-screen double buffers in PSRAM
     size_t buf_size = SCREEN_WIDTH * LVGL_BUFFER_LINES * sizeof(lv_color_t);
     Serial.printf("[LVGL] Buffer size: %d bytes\n", buf_size);
 
-    // Allocate both buffers from PSRAM for double buffering
     buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     buf2 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
@@ -614,10 +651,7 @@ bool init_lvgl(void) {
     disp_drv.ver_res = SCREEN_HEIGHT;
     disp_drv.flush_cb = lvgl_disp_flush;
     disp_drv.draw_buf = &draw_buf;
-    disp_drv.full_refresh = 1;  // Full refresh - reduces tearing artifacts
-    // Note: sw_rotate disabled - we handle 180° rotation in flush callback
-    disp_drv.sw_rotate = 0;
-    disp_drv.rotated = LV_DISP_ROT_NONE;
+    disp_drv.full_refresh = 0;  // Partial refresh for better performance
     lv_disp_drv_register(&disp_drv);
 
     Serial.println("[OK] LVGL display driver registered");
@@ -685,13 +719,12 @@ static void start_stop_event_cb(lv_event_t *e) {
 }
 
 //=============================================================================
-// Demo UI Creation - Tabbed Interface
+// Demo UI Creation
 //=============================================================================
 
 void create_demo_ui(void) {
     Serial.println("[UI] Creating tabbed interface...");
 
-    // Get the active screen and set background
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x1a1a2e), 0);
 
@@ -700,27 +733,23 @@ void create_demo_ui(void) {
     lv_obj_set_size(tabview, 480, 480);
     lv_obj_set_style_bg_color(tabview, lv_color_hex(0x1a1a2e), 0);
 
-    // Style the tab buttons
     lv_obj_t *tab_btns = lv_tabview_get_tab_btns(tabview);
     lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xaaaaaa), 0);
     lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x00ff88), LV_PART_ITEMS | LV_STATE_CHECKED);
 
-    // Create tabs
     lv_obj_t *tab_sensors = lv_tabview_add_tab(tabview, LV_SYMBOL_HOME " Sensors");
     lv_obj_t *tab_settings = lv_tabview_add_tab(tabview, LV_SYMBOL_SETTINGS " Settings");
     lv_obj_t *tab_info = lv_tabview_add_tab(tabview, LV_SYMBOL_LIST " Info");
 
-    // Style all tab content areas
     lv_obj_set_style_bg_color(tab_sensors, lv_color_hex(0x1a1a2e), 0);
     lv_obj_set_style_bg_color(tab_settings, lv_color_hex(0x1a1a2e), 0);
     lv_obj_set_style_bg_color(tab_info, lv_color_hex(0x1a1a2e), 0);
 
     //=========================================================================
-    // TAB 1: Sensors
+    // TAB 1: Sensors with animated gauge
     //=========================================================================
 
-    // Container for sensor data
     lv_obj_t *sensor_cont = lv_obj_create(tab_sensors);
     lv_obj_set_size(sensor_cont, 440, 340);
     lv_obj_align(sensor_cont, LV_ALIGN_TOP_MID, 0, 10);
@@ -778,7 +807,7 @@ void create_demo_ui(void) {
     lv_obj_set_style_text_font(tvoc_value, &lv_font_montserrat_32, 0);
     lv_obj_align(tvoc_value, LV_ALIGN_TOP_LEFT, 210, 120);
 
-    // Air Quality meter (animated speedometer)
+    // Air Quality gauge (animated)
     gauge_meter = lv_meter_create(sensor_cont);
     lv_obj_set_size(gauge_meter, 180, 180);
     lv_obj_align(gauge_meter, LV_ALIGN_BOTTOM_LEFT, 10, 10);
@@ -791,11 +820,9 @@ void create_demo_ui(void) {
     lv_meter_set_scale_major_ticks(gauge_meter, gauge_scale, 4, 3, 15, lv_color_hex(0xffffff), 10);
     lv_meter_set_scale_range(gauge_meter, gauge_scale, 0, 100, 270, 135);
 
-    // Arc indicator (shows value as colored arc)
     gauge_arc_indic = lv_meter_add_arc(gauge_meter, gauge_scale, 10, lv_color_hex(0x00ff88), 0);
     lv_meter_set_indicator_end_value(gauge_meter, gauge_arc_indic, 0);
 
-    // Needle indicator
     gauge_needle_indic = lv_meter_add_needle_line(gauge_meter, gauge_scale, 4, lv_color_hex(0xff6b6b), -15);
     lv_meter_set_indicator_value(gauge_meter, gauge_needle_indic, 0);
 
@@ -810,7 +837,7 @@ void create_demo_ui(void) {
     lv_obj_center(start_stop_label);
     lv_obj_add_event_cb(start_stop_btn, start_stop_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // FPS counter label
+    // FPS counter
     fps_label = lv_label_create(sensor_cont);
     lv_label_set_text(fps_label, "FPS: --");
     lv_obj_set_style_text_color(fps_label, lv_color_hex(0xffe66d), 0);
@@ -883,7 +910,7 @@ void create_demo_ui(void) {
     lv_obj_set_style_bg_color(bright_slider, lv_color_hex(0xffffff), LV_PART_KNOB);
     lv_obj_add_event_cb(bright_slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Action buttons row
+    // Action buttons
     lv_obj_t *btn_row = lv_obj_create(settings_cont);
     lv_obj_set_size(btn_row, 380, 60);
     lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
@@ -892,7 +919,6 @@ void create_demo_ui(void) {
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Refresh button
     lv_obj_t *btn_refresh = lv_btn_create(btn_row);
     lv_obj_set_size(btn_refresh, 110, 45);
     lv_obj_set_style_bg_color(btn_refresh, lv_color_hex(0x4ecdc4), 0);
@@ -902,7 +928,6 @@ void create_demo_ui(void) {
     lv_obj_center(lbl_refresh);
     lv_obj_add_event_cb(btn_refresh, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Save button
     lv_obj_t *btn_save = lv_btn_create(btn_row);
     lv_obj_set_size(btn_save, 110, 45);
     lv_obj_set_style_bg_color(btn_save, lv_color_hex(0x00ff88), 0);
@@ -912,7 +937,6 @@ void create_demo_ui(void) {
     lv_obj_center(lbl_save);
     lv_obj_add_event_cb(btn_save, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Reset button
     lv_obj_t *btn_reset = lv_btn_create(btn_row);
     lv_obj_set_size(btn_reset, 110, 45);
     lv_obj_set_style_bg_color(btn_reset, lv_color_hex(0xff6b6b), 0);
@@ -935,19 +959,17 @@ void create_demo_ui(void) {
     lv_obj_set_style_radius(info_cont, 15, 0);
     lv_obj_set_style_pad_all(info_cont, 25, 0);
 
-    // Title
     lv_obj_t *info_title = lv_label_create(info_cont);
     lv_label_set_text(info_title, "SenseCAP Indicator D1L");
     lv_obj_set_style_text_color(info_title, lv_color_hex(0x00ff88), 0);
     lv_obj_set_style_text_font(info_title, &lv_font_montserrat_24, 0);
     lv_obj_align(info_title, LV_ALIGN_TOP_MID, 0, 0);
 
-    // Info text
     lv_obj_t *info_text = lv_label_create(info_cont);
     lv_label_set_text(info_text,
         "Firmware: v1.0.0-dev\n"
-        "LVGL: v8.3\n"
-        "ESP-IDF: v4.4\n\n"
+        "LVGL: v8.3 (LovyanGFX)\n"
+        "ESP-IDF: v5.x\n\n"
         "Hardware:\n"
         "  CPU: ESP32-S3 @ 240MHz\n"
         "  Co-processor: RP2040\n"
@@ -961,7 +983,6 @@ void create_demo_ui(void) {
     lv_obj_set_style_text_font(info_text, &lv_font_montserrat_16, 0);
     lv_obj_align(info_text, LV_ALIGN_TOP_LEFT, 0, 40);
 
-    // Version badge
     lv_obj_t *badge = lv_obj_create(info_cont);
     lv_obj_set_size(badge, 180, 35);
     lv_obj_align(badge, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -970,7 +991,7 @@ void create_demo_ui(void) {
     lv_obj_set_style_border_width(badge, 0, 0);
 
     lv_obj_t *badge_text = lv_label_create(badge);
-    lv_label_set_text(badge_text, "SquareLine Ready");
+    lv_label_set_text(badge_text, "LovyanGFX Powered");
     lv_obj_set_style_text_color(badge_text, lv_color_hex(0x00ff88), 0);
     lv_obj_center(badge_text);
 
@@ -986,7 +1007,7 @@ void setup() {
 
     Serial.begin(115200);
     Serial.println("\n==========================================");
-    Serial.println("LVGL Integration Test - SenseCAP Indicator");
+    Serial.println("LVGL + LovyanGFX Test - SenseCAP Indicator");
     Serial.println("==========================================\n");
 
     // Initialize hardware
@@ -1005,9 +1026,9 @@ void setup() {
     create_demo_ui();
 
     lvgl_last_tick = millis();
-    fps_last_time = millis();  // Initialize FPS timer
+    fps_last_time = millis();
 
-    Serial.println("\n[OK] Setup complete - LVGL running\n");
+    Serial.println("\n[OK] Setup complete - LVGL + LovyanGFX running\n");
 }
 
 void loop() {
@@ -1023,7 +1044,6 @@ void loop() {
         fps_last_time = now;
         fps_frame_count = 0;
 
-        // Update FPS label
         if (fps_label) {
             static char fps_buf[16];
             snprintf(fps_buf, sizeof(fps_buf), "FPS: %.1f", current_fps);
@@ -1031,37 +1051,30 @@ void loop() {
         }
     }
 
-    // Animate gauge if running (rate-limited to reduce tearing)
+    // Animate gauge if running
     if (animation_running && gauge_meter && gauge_needle_indic && gauge_arc_indic) {
-        if (now - last_gauge_update >= GAUGE_UPDATE_INTERVAL) {
-            last_gauge_update = now;
+        gauge_value += gauge_direction;
 
-            gauge_value += gauge_direction;
-
-            // Bounce at limits
-            if (gauge_value >= 100) {
-                gauge_value = 100;
-                gauge_direction = -2;
-            } else if (gauge_value <= 0) {
-                gauge_value = 0;
-                gauge_direction = 2;
-            }
-
-            // Update meter indicators
-            lv_meter_set_indicator_value(gauge_meter, gauge_needle_indic, gauge_value);
-            lv_meter_set_indicator_end_value(gauge_meter, gauge_arc_indic, gauge_value);
-
-            // Change arc color based on value (green -> yellow -> red)
-            lv_color_t arc_color;
-            if (gauge_value < 33) {
-                arc_color = lv_color_hex(0x00ff88);  // Green
-            } else if (gauge_value < 66) {
-                arc_color = lv_color_hex(0xffe66d);  // Yellow
-            } else {
-                arc_color = lv_color_hex(0xff6b6b);  // Red
-            }
-            lv_meter_set_indicator_start_value(gauge_meter, gauge_arc_indic, 0);
+        if (gauge_value >= 100) {
+            gauge_value = 100;
+            gauge_direction = -5;
+        } else if (gauge_value <= 0) {
+            gauge_value = 0;
+            gauge_direction = 5;
         }
+
+        lv_meter_set_indicator_value(gauge_meter, gauge_needle_indic, gauge_value);
+        lv_meter_set_indicator_end_value(gauge_meter, gauge_arc_indic, gauge_value);
+
+        lv_color_t arc_color;
+        if (gauge_value < 33) {
+            arc_color = lv_color_hex(0x00ff88);
+        } else if (gauge_value < 66) {
+            arc_color = lv_color_hex(0xffe66d);
+        } else {
+            arc_color = lv_color_hex(0xff6b6b);
+        }
+        lv_meter_set_indicator_start_value(gauge_meter, gauge_arc_indic, 0);
     }
 
     // Run LVGL task handler
