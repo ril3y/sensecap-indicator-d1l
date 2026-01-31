@@ -433,109 +433,304 @@ bool init_lvgl(void) {
 }
 
 //=============================================================================
-// Demo UI Creation
+// UI Event Callbacks
+//=============================================================================
+
+static void btn_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t *btn = lv_event_get_target(e);
+
+    if (code == LV_EVENT_CLICKED) {
+        lv_obj_t *label = lv_obj_get_child(btn, 0);
+        const char *txt = lv_label_get_text(label);
+        Serial.printf("[UI] Button clicked: %s\n", txt);
+    }
+}
+
+static void switch_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t *sw = lv_event_get_target(e);
+
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        bool state = lv_obj_has_state(sw, LV_STATE_CHECKED);
+        Serial.printf("[UI] Switch toggled: %s\n", state ? "ON" : "OFF");
+    }
+}
+
+static void slider_event_cb(lv_event_t *e) {
+    lv_obj_t *slider = lv_event_get_target(e);
+    int32_t val = lv_slider_get_value(slider);
+    Serial.printf("[UI] Slider value: %d\n", val);
+}
+
+//=============================================================================
+// Demo UI Creation - Tabbed Interface
 //=============================================================================
 
 void create_demo_ui(void) {
-    Serial.println("[UI] Creating demo interface...");
+    Serial.println("[UI] Creating tabbed interface...");
 
-    // Get the active screen
+    // Get the active screen and set background
     lv_obj_t *scr = lv_scr_act();
-
-    // Set background color
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x1a1a2e), 0);
 
-    // Create a title label
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "SenseCAP Indicator");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff88), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
+    // Create tabview
+    lv_obj_t *tabview = lv_tabview_create(scr, LV_DIR_TOP, 50);
+    lv_obj_set_size(tabview, 480, 480);
+    lv_obj_set_style_bg_color(tabview, lv_color_hex(0x1a1a2e), 0);
 
-    // Create a subtitle
-    lv_obj_t *subtitle = lv_label_create(scr);
-    lv_label_set_text(subtitle, "LVGL Demo");
-    lv_obj_set_style_text_color(subtitle, lv_color_hex(0xaaaaaa), 0);
-    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_18, 0);
-    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 70);
+    // Style the tab buttons
+    lv_obj_t *tab_btns = lv_tabview_get_tab_btns(tabview);
+    lv_obj_set_style_bg_color(tab_btns, lv_color_hex(0x16213e), 0);
+    lv_obj_set_style_text_color(tab_btns, lv_color_hex(0xaaaaaa), 0);
+    lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x00ff88), LV_PART_ITEMS | LV_STATE_CHECKED);
 
-    // Create a container for stats
-    lv_obj_t *container = lv_obj_create(scr);
-    lv_obj_set_size(container, 420, 280);
-    lv_obj_align(container, LV_ALIGN_CENTER, 0, 30);
-    lv_obj_set_style_bg_color(container, lv_color_hex(0x16213e), 0);
-    lv_obj_set_style_border_color(container, lv_color_hex(0x0f3460), 0);
-    lv_obj_set_style_border_width(container, 2, 0);
-    lv_obj_set_style_radius(container, 15, 0);
+    // Create tabs
+    lv_obj_t *tab_sensors = lv_tabview_add_tab(tabview, LV_SYMBOL_HOME " Sensors");
+    lv_obj_t *tab_settings = lv_tabview_add_tab(tabview, LV_SYMBOL_SETTINGS " Settings");
+    lv_obj_t *tab_info = lv_tabview_add_tab(tabview, LV_SYMBOL_LIST " Info");
 
-    // Temperature display
-    lv_obj_t *temp_label = lv_label_create(container);
+    // Style all tab content areas
+    lv_obj_set_style_bg_color(tab_sensors, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_color(tab_settings, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_color(tab_info, lv_color_hex(0x1a1a2e), 0);
+
+    //=========================================================================
+    // TAB 1: Sensors
+    //=========================================================================
+
+    // Container for sensor data
+    lv_obj_t *sensor_cont = lv_obj_create(tab_sensors);
+    lv_obj_set_size(sensor_cont, 440, 340);
+    lv_obj_align(sensor_cont, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_color(sensor_cont, lv_color_hex(0x16213e), 0);
+    lv_obj_set_style_border_color(sensor_cont, lv_color_hex(0x0f3460), 0);
+    lv_obj_set_style_border_width(sensor_cont, 2, 0);
+    lv_obj_set_style_radius(sensor_cont, 15, 0);
+    lv_obj_set_style_pad_all(sensor_cont, 20, 0);
+
+    // Temperature
+    lv_obj_t *temp_label = lv_label_create(sensor_cont);
     lv_label_set_text(temp_label, LV_SYMBOL_HOME " Temperature");
     lv_obj_set_style_text_color(temp_label, lv_color_hex(0xff6b6b), 0);
-    lv_obj_align(temp_label, LV_ALIGN_TOP_LEFT, 20, 20);
+    lv_obj_align(temp_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    lv_obj_t *temp_value = lv_label_create(container);
+    lv_obj_t *temp_value = lv_label_create(sensor_cont);
     lv_label_set_text(temp_value, "23.5 C");
     lv_obj_set_style_text_color(temp_value, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_text_font(temp_value, &lv_font_montserrat_28, 0);
-    lv_obj_align(temp_value, LV_ALIGN_TOP_LEFT, 20, 50);
+    lv_obj_set_style_text_font(temp_value, &lv_font_montserrat_32, 0);
+    lv_obj_align(temp_value, LV_ALIGN_TOP_LEFT, 0, 30);
 
-    // Humidity display
-    lv_obj_t *hum_label = lv_label_create(container);
+    // Humidity
+    lv_obj_t *hum_label = lv_label_create(sensor_cont);
     lv_label_set_text(hum_label, LV_SYMBOL_WIFI " Humidity");
     lv_obj_set_style_text_color(hum_label, lv_color_hex(0x4ecdc4), 0);
-    lv_obj_align(hum_label, LV_ALIGN_TOP_LEFT, 220, 20);
+    lv_obj_align(hum_label, LV_ALIGN_TOP_LEFT, 210, 0);
 
-    lv_obj_t *hum_value = lv_label_create(container);
+    lv_obj_t *hum_value = lv_label_create(sensor_cont);
     lv_label_set_text(hum_value, "65 %");
     lv_obj_set_style_text_color(hum_value, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_text_font(hum_value, &lv_font_montserrat_28, 0);
-    lv_obj_align(hum_value, LV_ALIGN_TOP_LEFT, 220, 50);
+    lv_obj_set_style_text_font(hum_value, &lv_font_montserrat_32, 0);
+    lv_obj_align(hum_value, LV_ALIGN_TOP_LEFT, 210, 30);
 
-    // CO2 display
-    lv_obj_t *co2_label = lv_label_create(container);
+    // CO2
+    lv_obj_t *co2_label = lv_label_create(sensor_cont);
     lv_label_set_text(co2_label, LV_SYMBOL_CHARGE " CO2");
     lv_obj_set_style_text_color(co2_label, lv_color_hex(0xffe66d), 0);
-    lv_obj_align(co2_label, LV_ALIGN_TOP_LEFT, 20, 100);
+    lv_obj_align(co2_label, LV_ALIGN_TOP_LEFT, 0, 90);
 
-    lv_obj_t *co2_value = lv_label_create(container);
+    lv_obj_t *co2_value = lv_label_create(sensor_cont);
     lv_label_set_text(co2_value, "412 ppm");
     lv_obj_set_style_text_color(co2_value, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_text_font(co2_value, &lv_font_montserrat_28, 0);
-    lv_obj_align(co2_value, LV_ALIGN_TOP_LEFT, 20, 130);
+    lv_obj_set_style_text_font(co2_value, &lv_font_montserrat_32, 0);
+    lv_obj_align(co2_value, LV_ALIGN_TOP_LEFT, 0, 120);
 
-    // TVOC display
-    lv_obj_t *tvoc_label = lv_label_create(container);
+    // TVOC
+    lv_obj_t *tvoc_label = lv_label_create(sensor_cont);
     lv_label_set_text(tvoc_label, LV_SYMBOL_WARNING " TVOC");
     lv_obj_set_style_text_color(tvoc_label, lv_color_hex(0xa29bfe), 0);
-    lv_obj_align(tvoc_label, LV_ALIGN_TOP_LEFT, 220, 100);
+    lv_obj_align(tvoc_label, LV_ALIGN_TOP_LEFT, 210, 90);
 
-    lv_obj_t *tvoc_value = lv_label_create(container);
+    lv_obj_t *tvoc_value = lv_label_create(sensor_cont);
     lv_label_set_text(tvoc_value, "125 ppb");
     lv_obj_set_style_text_color(tvoc_value, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_text_font(tvoc_value, &lv_font_montserrat_28, 0);
-    lv_obj_align(tvoc_value, LV_ALIGN_TOP_LEFT, 220, 130);
+    lv_obj_set_style_text_font(tvoc_value, &lv_font_montserrat_32, 0);
+    lv_obj_align(tvoc_value, LV_ALIGN_TOP_LEFT, 210, 120);
 
-    // Progress bar
-    lv_obj_t *bar = lv_bar_create(container);
-    lv_obj_set_size(bar, 380, 20);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, -50);
-    lv_bar_set_value(bar, 70, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x0f3460), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x00ff88), LV_PART_INDICATOR);
+    // Air Quality meter
+    lv_obj_t *meter = lv_meter_create(sensor_cont);
+    lv_obj_set_size(meter, 150, 150);
+    lv_obj_align(meter, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-    lv_obj_t *bar_label = lv_label_create(container);
-    lv_label_set_text(bar_label, "Air Quality: Good");
-    lv_obj_set_style_text_color(bar_label, lv_color_hex(0x00ff88), 0);
-    lv_obj_align(bar_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_meter_scale_t *scale = lv_meter_add_scale(meter);
+    lv_meter_set_scale_ticks(meter, scale, 11, 2, 10, lv_color_hex(0x666666));
+    lv_meter_set_scale_major_ticks(meter, scale, 2, 3, 15, lv_color_hex(0xffffff), 10);
+    lv_meter_set_scale_range(meter, scale, 0, 100, 270, 135);
 
-    // Footer
-    lv_obj_t *footer = lv_label_create(scr);
-    lv_label_set_text(footer, "SquareLine Studio Compatible");
-    lv_obj_set_style_text_color(footer, lv_color_hex(0x666666), 0);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_meter_indicator_t *indic = lv_meter_add_arc(meter, scale, 10, lv_color_hex(0x00ff88), 0);
+    lv_meter_set_indicator_end_value(meter, indic, 70);
 
-    Serial.println("[OK] Demo UI created");
+    lv_meter_indicator_t *needle = lv_meter_add_needle_line(meter, scale, 3, lv_color_hex(0xff6b6b), -10);
+    lv_meter_set_indicator_value(meter, needle, 70);
+
+    //=========================================================================
+    // TAB 2: Settings
+    //=========================================================================
+
+    lv_obj_t *settings_cont = lv_obj_create(tab_settings);
+    lv_obj_set_size(settings_cont, 440, 340);
+    lv_obj_align(settings_cont, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_color(settings_cont, lv_color_hex(0x16213e), 0);
+    lv_obj_set_style_border_color(settings_cont, lv_color_hex(0x0f3460), 0);
+    lv_obj_set_style_border_width(settings_cont, 2, 0);
+    lv_obj_set_style_radius(settings_cont, 15, 0);
+    lv_obj_set_flex_flow(settings_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(settings_cont, 20, 0);
+    lv_obj_set_style_pad_row(settings_cont, 15, 0);
+
+    // WiFi toggle
+    lv_obj_t *wifi_row = lv_obj_create(settings_cont);
+    lv_obj_set_size(wifi_row, 380, 50);
+    lv_obj_set_style_bg_opa(wifi_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(wifi_row, 0, 0);
+    lv_obj_set_style_pad_all(wifi_row, 0, 0);
+
+    lv_obj_t *wifi_label = lv_label_create(wifi_row);
+    lv_label_set_text(wifi_label, LV_SYMBOL_WIFI " WiFi");
+    lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_18, 0);
+    lv_obj_align(wifi_label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *wifi_sw = lv_switch_create(wifi_row);
+    lv_obj_align(wifi_sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_state(wifi_sw, LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(wifi_sw, lv_color_hex(0x00ff88), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(wifi_sw, switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Bluetooth toggle
+    lv_obj_t *bt_row = lv_obj_create(settings_cont);
+    lv_obj_set_size(bt_row, 380, 50);
+    lv_obj_set_style_bg_opa(bt_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bt_row, 0, 0);
+    lv_obj_set_style_pad_all(bt_row, 0, 0);
+
+    lv_obj_t *bt_label = lv_label_create(bt_row);
+    lv_label_set_text(bt_label, LV_SYMBOL_BLUETOOTH " Bluetooth");
+    lv_obj_set_style_text_color(bt_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(bt_label, &lv_font_montserrat_18, 0);
+    lv_obj_align(bt_label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *bt_sw = lv_switch_create(bt_row);
+    lv_obj_align(bt_sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(bt_sw, lv_color_hex(0x00ff88), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(bt_sw, switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Brightness slider
+    lv_obj_t *bright_label = lv_label_create(settings_cont);
+    lv_label_set_text(bright_label, LV_SYMBOL_IMAGE " Brightness");
+    lv_obj_set_style_text_color(bright_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(bright_label, &lv_font_montserrat_18, 0);
+
+    lv_obj_t *bright_slider = lv_slider_create(settings_cont);
+    lv_obj_set_width(bright_slider, 380);
+    lv_slider_set_value(bright_slider, 80, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bright_slider, lv_color_hex(0x0f3460), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bright_slider, lv_color_hex(0x00ff88), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bright_slider, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_add_event_cb(bright_slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Action buttons row
+    lv_obj_t *btn_row = lv_obj_create(settings_cont);
+    lv_obj_set_size(btn_row, 380, 60);
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_style_pad_all(btn_row, 0, 0);
+    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Refresh button
+    lv_obj_t *btn_refresh = lv_btn_create(btn_row);
+    lv_obj_set_size(btn_refresh, 110, 45);
+    lv_obj_set_style_bg_color(btn_refresh, lv_color_hex(0x4ecdc4), 0);
+    lv_obj_set_style_radius(btn_refresh, 10, 0);
+    lv_obj_t *lbl_refresh = lv_label_create(btn_refresh);
+    lv_label_set_text(lbl_refresh, LV_SYMBOL_REFRESH " Refresh");
+    lv_obj_center(lbl_refresh);
+    lv_obj_add_event_cb(btn_refresh, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // Save button
+    lv_obj_t *btn_save = lv_btn_create(btn_row);
+    lv_obj_set_size(btn_save, 110, 45);
+    lv_obj_set_style_bg_color(btn_save, lv_color_hex(0x00ff88), 0);
+    lv_obj_set_style_radius(btn_save, 10, 0);
+    lv_obj_t *lbl_save = lv_label_create(btn_save);
+    lv_label_set_text(lbl_save, LV_SYMBOL_SAVE " Save");
+    lv_obj_center(lbl_save);
+    lv_obj_add_event_cb(btn_save, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // Reset button
+    lv_obj_t *btn_reset = lv_btn_create(btn_row);
+    lv_obj_set_size(btn_reset, 110, 45);
+    lv_obj_set_style_bg_color(btn_reset, lv_color_hex(0xff6b6b), 0);
+    lv_obj_set_style_radius(btn_reset, 10, 0);
+    lv_obj_t *lbl_reset = lv_label_create(btn_reset);
+    lv_label_set_text(lbl_reset, LV_SYMBOL_TRASH " Reset");
+    lv_obj_center(lbl_reset);
+    lv_obj_add_event_cb(btn_reset, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+    //=========================================================================
+    // TAB 3: Info
+    //=========================================================================
+
+    lv_obj_t *info_cont = lv_obj_create(tab_info);
+    lv_obj_set_size(info_cont, 440, 340);
+    lv_obj_align(info_cont, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_color(info_cont, lv_color_hex(0x16213e), 0);
+    lv_obj_set_style_border_color(info_cont, lv_color_hex(0x0f3460), 0);
+    lv_obj_set_style_border_width(info_cont, 2, 0);
+    lv_obj_set_style_radius(info_cont, 15, 0);
+    lv_obj_set_style_pad_all(info_cont, 25, 0);
+
+    // Title
+    lv_obj_t *info_title = lv_label_create(info_cont);
+    lv_label_set_text(info_title, "SenseCAP Indicator D1L");
+    lv_obj_set_style_text_color(info_title, lv_color_hex(0x00ff88), 0);
+    lv_obj_set_style_text_font(info_title, &lv_font_montserrat_24, 0);
+    lv_obj_align(info_title, LV_ALIGN_TOP_MID, 0, 0);
+
+    // Info text
+    lv_obj_t *info_text = lv_label_create(info_cont);
+    lv_label_set_text(info_text,
+        "Firmware: v1.0.0-dev\n"
+        "LVGL: v8.3\n"
+        "ESP-IDF: v4.4\n\n"
+        "Hardware:\n"
+        "  CPU: ESP32-S3 @ 240MHz\n"
+        "  Co-processor: RP2040\n"
+        "  Display: 480x480 RGB\n"
+        "  Touch: FT6336U\n\n"
+        "Sensors:\n"
+        "  AHT20 (Temp/Humidity)\n"
+        "  SGP40 (TVOC)\n"
+        "  SCD41 (CO2)");
+    lv_obj_set_style_text_color(info_text, lv_color_hex(0xcccccc), 0);
+    lv_obj_set_style_text_font(info_text, &lv_font_montserrat_16, 0);
+    lv_obj_align(info_text, LV_ALIGN_TOP_LEFT, 0, 40);
+
+    // Version badge
+    lv_obj_t *badge = lv_obj_create(info_cont);
+    lv_obj_set_size(badge, 180, 35);
+    lv_obj_align(badge, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(badge, lv_color_hex(0x0f3460), 0);
+    lv_obj_set_style_radius(badge, 17, 0);
+    lv_obj_set_style_border_width(badge, 0, 0);
+
+    lv_obj_t *badge_text = lv_label_create(badge);
+    lv_label_set_text(badge_text, "SquareLine Ready");
+    lv_obj_set_style_text_color(badge_text, lv_color_hex(0x00ff88), 0);
+    lv_obj_center(badge_text);
+
+    Serial.println("[OK] Tabbed UI created");
 }
 
 //=============================================================================
