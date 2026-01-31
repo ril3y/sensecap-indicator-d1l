@@ -32,7 +32,7 @@ Develop custom firmware for the SenseCAP Indicator D1L that enables full hardwar
 ### 2.1 ESP32-S3 (Main Controller)
 | Component | Interface | Priority | Status |
 |-----------|-----------|----------|--------|
-| UART to RP2040 | GPIO43/44 | P0 | 🔴 Not Started |
+| UART to RP2040 | GPIO19/20 | P0 | ✅ Complete |
 | TCA9535 IO Expander | I2C 0x20 | P0 | ✅ Complete |
 | 4" RGB LCD (ST7701) | 16-bit RGB | P0 | ✅ Complete |
 | Touch Panel (FT6336U) | I2C 0x48 | P1 | ✅ Complete |
@@ -49,7 +49,7 @@ Those sensors are only on D1S and D1Pro models. The D1L RP2040 handles SD card, 
 
 | Component | Interface | Priority | Status | D1L |
 |-----------|-----------|----------|--------|-----|
-| UART to ESP32 | GP16/17 | P0 | 🔴 Not Started | ✓ |
+| UART to ESP32 | GP16/17 | P0 | ✅ Complete | ✓ |
 | Buzzer | GP19 PWM | P1 | ✅ Complete | ✓ |
 | SD Card | SPI1 | P2 | 🔴 Not Started | ✓ |
 | Grove ADC | GP26/27 | P2 | 🔴 Not Started | ✓ |

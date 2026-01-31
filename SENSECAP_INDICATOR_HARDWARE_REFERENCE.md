@@ -101,7 +101,7 @@
 | GPIO39-40 | I2C Bus | 2 |
 | GPIO41, 47-48 | SPI (LoRa) | 3 |
 | GPIO42 | IO Expander Interrupt | 1 |
-| GPIO43-44 | UART (to RP2040) | 2 |
+| GPIO19-20 | UART (to RP2040) | 2 |
 | GPIO45 | LCD Backlight | 1 |
 
 ---
@@ -155,8 +155,8 @@ Stop Bits:   1
 
 ESP32-S3          RP2040
 ────────          ──────
-GPIO43 (TX) ───► GP17 (RX)
-GPIO44 (RX) ◄─── GP16 (TX)
+GPIO19 (TX) ───► GP17 (RX)
+GPIO20 (RX) ◄─── GP16 (TX)
 ```
 
 ### Packet Format
@@ -629,8 +629,8 @@ void loop() {
 | 40 | I2C SCL | Output | |
 | 41 | SPI SCLK | Output | LoRa |
 | 42 | IO Exp INT | Input | Active LOW |
-| 43 | UART TX | Output | To RP2040 |
-| 44 | UART RX | Input | From RP2040 |
+| 19 | UART TX | Output | To RP2040 GP17 |
+| 20 | UART RX | Input | From RP2040 GP16 |
 | 45 | LCD Backlight | Output | Active HIGH |
 | 46 | - | - | Not used |
 | 47 | SPI MISO | Input | LoRa |
