@@ -63,7 +63,8 @@
 #define LCD_B4  11
 
 // LVGL buffer configuration
-#define LVGL_BUFFER_LINES 40  // Number of lines per buffer (uses ~38KB each)
+// Larger buffer reduces tearing, uses more RAM
+#define LVGL_BUFFER_LINES 80  // Number of lines per buffer (uses ~76KB each)
 
 // Global objects
 static Arduino_ESP32RGBPanel *rgbpanel = nullptr;
