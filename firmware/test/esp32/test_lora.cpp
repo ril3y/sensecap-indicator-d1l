@@ -478,13 +478,23 @@ void touch_init() {
 //=============================================================================
 
 void lvgl_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
+    uint32_t w = (area->x2 - area->x1 + 1);
+    uint32_t h = (area->y2 - area->y1 + 1);
+
     if (lcd_framebuffer) {
-        // Simple 180-degree rotation: reverse entire buffer
         uint16_t *src = (uint16_t *)color_p;
-        uint32_t total = SCREEN_WIDTH * SCREEN_HEIGHT;
-        uint16_t *dst = lcd_framebuffer + total - 1;
-        for (uint32_t i = 0; i < total; i++) {
-            *dst-- = *src++;
+
+        // 180° rotation for all updates (full or partial)
+        int32_t rot_x1 = SCREEN_WIDTH - 1 - area->x2;
+        int32_t rot_y1 = SCREEN_HEIGHT - 1 - area->y2;
+
+        for (uint32_t sy = 0; sy < h; sy++) {
+            for (uint32_t sx = 0; sx < w; sx++) {
+                uint16_t pixel = src[sy * w + sx];
+                uint32_t dx = rot_x1 + (w - 1 - sx);
+                uint32_t dy = rot_y1 + (h - 1 - sy);
+                lcd_framebuffer[dy * SCREEN_WIDTH + dx] = pixel;
+            }
         }
     }
     lv_disp_flush_ready(drv);
@@ -584,7 +594,7 @@ bool init_lvgl() {
     disp_drv.ver_res = SCREEN_HEIGHT;
     disp_drv.flush_cb = lvgl_flush;
     disp_drv.draw_buf = &draw_buf;
-    disp_drv.full_refresh = 1;
+    disp_drv.full_refresh = 0;  // Partial refresh for better performance
     lv_disp_drv_register(&disp_drv);
 
     lv_indev_drv_init(&indev_drv);
