@@ -1010,9 +1010,24 @@ void setup() {
     Serial.println("\n[OK] Setup complete - LVGL running\n");
 }
 
+// Minimum loop interval for efficient polling (10ms = 100 Hz max)
+// This reduces touch I2C traffic from 1000+ to ~100 reads/sec
+#define MIN_LOOP_INTERVAL_MS 10
+
 void loop() {
-    // Update LVGL tick
+    static unsigned long last_loop_time = 0;
     unsigned long now = millis();
+
+    // Throttle loop to reduce I2C polling overhead
+    // Without this, touch polling runs at 1000+ Hz wasting CPU on I2C
+    unsigned long elapsed = now - last_loop_time;
+    if (elapsed < MIN_LOOP_INTERVAL_MS) {
+        delay(MIN_LOOP_INTERVAL_MS - elapsed);
+        now = millis();
+    }
+    last_loop_time = now;
+
+    // Update LVGL tick
     lv_tick_inc(now - lvgl_last_tick);
     lvgl_last_tick = now;
 
@@ -1066,7 +1081,4 @@ void loop() {
 
     // Run LVGL task handler
     lv_timer_handler();
-
-    // Yield to other tasks
-    yield();
 }

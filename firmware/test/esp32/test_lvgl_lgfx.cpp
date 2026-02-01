@@ -51,6 +51,10 @@
 // Backlight pin
 #define GFX_BL 45
 
+// Loop throttling - limits touch polling to ~100Hz max
+// Reduces I2C traffic from 1000+ reads/sec to ~100 reads/sec
+#define MIN_LOOP_INTERVAL_MS 10
+
 // SPI pins for ST7701 initialization
 #define LCD_SPI_SCK   41
 #define LCD_SPI_MOSI  48
@@ -1032,8 +1036,17 @@ void setup() {
 }
 
 void loop() {
-    // Update LVGL tick
+    // Loop throttling to limit touch polling rate
+    static unsigned long last_loop_time = 0;
     unsigned long now = millis();
+    unsigned long elapsed = now - last_loop_time;
+    if (elapsed < MIN_LOOP_INTERVAL_MS) {
+        delay(MIN_LOOP_INTERVAL_MS - elapsed);
+        now = millis();
+    }
+    last_loop_time = now;
+
+    // Update LVGL tick
     lv_tick_inc(now - lvgl_last_tick);
     lvgl_last_tick = now;
 
