@@ -109,9 +109,9 @@ static lv_obj_t *fps_label = nullptr;
 static lv_obj_t *start_stop_btn = nullptr;
 static lv_obj_t *start_stop_label = nullptr;
 static int32_t gauge_value = 0;
-static int32_t gauge_direction = 2;  // Slower needle movement to reduce tearing
+static int32_t gauge_direction = 5;  // Faster needle movement for smoother animation
 static unsigned long last_gauge_update = 0;
-static const unsigned long GAUGE_UPDATE_INTERVAL = 33;  // ~30Hz update rate
+static const unsigned long GAUGE_UPDATE_INTERVAL = 16;  // ~60Hz update rate
 
 // FPS calculation
 static unsigned long fps_last_time = 0;
@@ -356,22 +356,23 @@ void lvgl_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *col
     if (lcd_framebuffer != nullptr) {
         uint16_t *src = (uint16_t *)color_p;
 
-        // Check if this is a full-screen flush (for full_refresh mode with 180° rotation)
-        if (w == SCREEN_WIDTH && h == SCREEN_HEIGHT) {
-            // Full screen: 180° rotation = reverse the entire buffer
-            // Much faster than per-pixel x,y calculation
-            uint32_t total_pixels = SCREEN_WIDTH * SCREEN_HEIGHT;
-            uint16_t *dst = lcd_framebuffer + total_pixels - 1;
-            for (uint32_t i = 0; i < total_pixels; i++) {
-                *dst-- = *src++;
-            }
-        } else {
-            // Partial update: direct copy (used when sw_rotate is enabled)
-            uint16_t *dst = lcd_framebuffer + (area->y1 * SCREEN_WIDTH + area->x1);
-            for (uint32_t y = 0; y < h; y++) {
-                memcpy(dst, src, w * sizeof(uint16_t));
-                src += w;
-                dst += SCREEN_WIDTH;
+        // 180° rotation for all updates (full or partial)
+        // For 180° rotation: pixel at (x,y) goes to (WIDTH-1-x, HEIGHT-1-y)
+        // We process the source buffer and write to rotated destination
+
+        // Calculate rotated destination area
+        int32_t rot_x1 = SCREEN_WIDTH - 1 - area->x2;
+        int32_t rot_y1 = SCREEN_HEIGHT - 1 - area->y2;
+
+        // Write pixels in reverse order to achieve 180° rotation
+        for (uint32_t sy = 0; sy < h; sy++) {
+            for (uint32_t sx = 0; sx < w; sx++) {
+                // Source pixel
+                uint16_t pixel = src[sy * w + sx];
+                // Destination in rotated coordinates (reverse order)
+                uint32_t dx = rot_x1 + (w - 1 - sx);
+                uint32_t dy = rot_y1 + (h - 1 - sy);
+                lcd_framebuffer[dy * SCREEN_WIDTH + dx] = pixel;
             }
         }
     } else {
@@ -459,12 +460,6 @@ void lvgl_touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         // Touch detected - apply 180° rotation to match display
         int16_t rx = SCREEN_WIDTH - 1 - x;
         int16_t ry = SCREEN_HEIGHT - 1 - y;
-
-        // Clamp to screen bounds
-        if (rx < 0) rx = 0;
-        if (rx >= SCREEN_WIDTH) rx = SCREEN_WIDTH - 1;
-        if (ry < 0) ry = 0;
-        if (ry >= SCREEN_HEIGHT) ry = SCREEN_HEIGHT - 1;
 
         data->state = LV_INDEV_STATE_PRESSED;
         data->point.x = rx;
@@ -614,8 +609,8 @@ bool init_lvgl(void) {
     disp_drv.ver_res = SCREEN_HEIGHT;
     disp_drv.flush_cb = lvgl_disp_flush;
     disp_drv.draw_buf = &draw_buf;
-    disp_drv.full_refresh = 1;  // Full refresh - reduces tearing artifacts
-    // Note: sw_rotate disabled - we handle 180° rotation in flush callback
+    disp_drv.full_refresh = 0;  // Partial refresh - only redraw dirty regions (HUGE perf boost)
+    // No LVGL rotation - we handle 180° rotation in flush callback
     disp_drv.sw_rotate = 0;
     disp_drv.rotated = LV_DISP_ROT_NONE;
     lv_disp_drv_register(&disp_drv);
@@ -1056,10 +1051,10 @@ void loop() {
             // Bounce at limits
             if (gauge_value >= 100) {
                 gauge_value = 100;
-                gauge_direction = -2;
+                gauge_direction = -5;
             } else if (gauge_value <= 0) {
                 gauge_value = 0;
-                gauge_direction = 2;
+                gauge_direction = 5;
             }
 
             // Update meter indicators
@@ -1076,6 +1071,9 @@ void loop() {
                 arc_color = lv_color_hex(0xff6b6b);  // Red
             }
             lv_meter_set_indicator_start_value(gauge_meter, gauge_arc_indic, 0);
+
+            // Force LVGL to redraw the gauge
+            lv_obj_invalidate(gauge_meter);
         }
     }
 
