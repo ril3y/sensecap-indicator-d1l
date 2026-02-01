@@ -35,6 +35,9 @@
 // IO Expander I2C address
 static uint8_t ioexp_addr = 0x20;  // Will try 0x20 first, then 0x39
 
+// TCA9535 Interrupt pin - goes LOW when any input changes
+#define PIN_IO_EXP_INT   42
+
 // LoRa pins via IO Expander (manual control)
 // These are IO expander pin numbers, not GPIO!
 #define LORA_IOEXP_CS    0
@@ -115,6 +118,17 @@ static bool lora_ok = false;
 static bool scanning = false;
 static int packet_count = 0;
 static float current_freq = 906.875;  // Meshtastic US primary
+
+// Interrupt-driven IO expander support
+// The TCA9535 INT pin (GPIO42) goes LOW when DIO1 or BUSY change state
+static volatile bool ioexp_interrupt_pending = false;
+static volatile uint32_t ioexp_interrupt_count = 0;
+
+// ISR for TCA9535 interrupt - must be in IRAM
+void IRAM_ATTR ioexp_interrupt_isr() {
+    ioexp_interrupt_pending = true;
+    ioexp_interrupt_count++;
+}
 
 // Frequency presets - Meshtastic US primary channel is 906.875 MHz
 static const float freq_presets[] = {906.875, 903.08, 915.0, 868.0};
@@ -229,9 +243,8 @@ public:
 
     void attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) override {
         if (interruptNum >= 200) {
-            // Can't attach interrupt to IO expander pins easily
-            // Would need to use IO expander interrupt pin + polling
-            Serial.println("[HAL] IO expander interrupt not implemented");
+            // Virtual pin on IO expander - handled via GPIO42 interrupt
+            Serial.println("[HAL] DIO1 interrupt routed through GPIO42");
         } else {
             ::attachInterrupt(interruptNum, interruptCb, mode);
         }
@@ -812,9 +825,19 @@ void setup() {
     // Init LoRa
     lora_ok = lora_init();
 
+    // Setup GPIO42 interrupt for IO expander (TCA9535 INT pin)
+    // This triggers when DIO1 or BUSY change state - no more polling!
+    pinMode(PIN_IO_EXP_INT, INPUT_PULLUP);
+    attachInterrupt(PIN_IO_EXP_INT, ioexp_interrupt_isr, FALLING);
+    Serial.println("[INT] GPIO42 interrupt attached");
+
+    // Clear any pending interrupt by reading input register
+    ioexp_read_reg(IOEXP_INPUT_PORT0);
+
     if (lora_ok) {
         lv_label_set_text(lbl_status, "Ready");
         log_msg("Ready - tap Start to scan");
+        log_msg("Using GPIO42 interrupt!");
     } else {
         lv_label_set_text(lbl_status, "LoRa FAILED");
         lv_obj_set_style_text_color(lbl_status, lv_color_hex(0xff4444), 0);
@@ -830,10 +853,17 @@ void loop() {
 
     lv_timer_handler();
 
-    // Check for received packets
-    if (scanning && lora_ok && radio) {
-        // Check DIO1 via IO expander
-        if (ioexp_read_pin(LORA_IOEXP_DIO1)) {
+    // Check for received packets using interrupt flag (NOT polling!)
+    // The ISR sets ioexp_interrupt_pending when GPIO42 goes LOW
+    if (scanning && lora_ok && radio && ioexp_interrupt_pending) {
+        ioexp_interrupt_pending = false;
+
+        // Read input register to get pin states AND clear the interrupt
+        uint8_t port0 = ioexp_read_reg(IOEXP_INPUT_PORT0);
+        bool dio1_high = (port0 >> LORA_IOEXP_DIO1) & 1;
+
+        // DIO1 HIGH means packet received
+        if (dio1_high) {
             uint8_t data[256];
             size_t len = radio->getPacketLength();
             if (len > sizeof(data)) len = sizeof(data);
@@ -844,8 +874,9 @@ void loop() {
                 packet_count++;
 
                 char buf[128];
-                snprintf(buf, sizeof(buf), "[%d] %dB RSSI:%.0f SNR:%.1f",
-                    packet_count, (int)len, radio->getRSSI(), radio->getSNR());
+                snprintf(buf, sizeof(buf), "[%d] %dB RSSI:%.0f SNR:%.1f (INT#%lu)",
+                    packet_count, (int)len, radio->getRSSI(), radio->getSNR(),
+                    ioexp_interrupt_count);
                 log_msg(buf);
 
                 // Hex preview
@@ -865,5 +896,7 @@ void loop() {
         }
     }
 
-    delay(5);
+    // No fixed delay needed - we respond to interrupts
+    // Small yield to allow other tasks
+    yield();
 }
