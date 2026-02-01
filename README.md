@@ -177,7 +177,7 @@ firmware/
 | UART RX | 20 | ← RP2040 GPIO16 |
 | **Other** | | |
 | User Button | 38 | Active low, internal pullup |
-| IO Expander INT | 42 | TCA9535 interrupt |
+| IO Expander INT | 42 | TCA9535 interrupt (active low, signals input change) |
 
 ### RP2040 Pinout
 
@@ -212,6 +212,8 @@ The TCA9535 provides additional GPIO for LCD and LoRa control.
 | IO4 | LCD CS | Output | ST7701S chip select |
 | IO5 | LCD RST | Output | ST7701S reset |
 | IO7 | Touch RST | Output | FT6336U reset |
+
+**Interrupt Output (INT):** The TCA9535 has an open-drain INT pin connected to **ESP32 GPIO42**. This pin goes LOW when any input (IO2, IO3) changes state. Reading the Input Port register clears the interrupt. This enables interrupt-driven LoRa packet detection instead of polling - see [firmware/docs/TCA9535_INTERRUPT_OPTIMIZATION.md](firmware/docs/TCA9535_INTERRUPT_OPTIMIZATION.md).
 
 **Note:** LCD SPI data (SCK/MOSI) uses GPIO41/48 directly via bit-banging, not through the IO expander.
 

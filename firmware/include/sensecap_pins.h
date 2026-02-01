@@ -59,7 +59,10 @@
 #define PIN_SPI_MISO        47
 #define PIN_SPI_SCLK        41
 
-// IO Expander Interrupt
+// IO Expander Interrupt (TCA9535)
+// INT is open-drain, active-low. Goes LOW when any INPUT pin changes.
+// Reading the Input Port register clears the interrupt.
+// Use this for interrupt-driven LoRa packet detection instead of polling.
 #define PIN_IO_EXP_INT      42
 
 // UART to RP2040
@@ -79,16 +82,17 @@
 #define I2C_ADDR_BMP3XX         0x77    // D1Pro only
 
 // IO Expander Pin Assignments (TCA9535)
-#define IOEXP_LORA_NSS      0
-#define IOEXP_LORA_RST      1
-#define IOEXP_LORA_BUSY     2
-#define IOEXP_LORA_DIO1     3
-#define IOEXP_LCD_CS        4
-#define IOEXP_LCD_RST       5
-#define IOEXP_TOUCH_RST     7
-#define IOEXP_RP2040_RST    8
-#define IOEXP_BMP_PWR       10
-#define IOEXP_TCXO_VER      11
+// Pins marked [INPUT] trigger the INT signal on GPIO42 when they change
+#define IOEXP_LORA_NSS      0   // Output: SX1262 chip select
+#define IOEXP_LORA_RST      1   // Output: SX1262 reset
+#define IOEXP_LORA_BUSY     2   // [INPUT]: SX1262 busy status - triggers INT
+#define IOEXP_LORA_DIO1     3   // [INPUT]: SX1262 packet RX/TX done - triggers INT
+#define IOEXP_LCD_CS        4   // Output: ST7701S chip select
+#define IOEXP_LCD_RST       5   // Output: ST7701S reset
+#define IOEXP_TOUCH_RST     7   // Output: FT6336U reset
+#define IOEXP_RP2040_RST    8   // Output: RP2040 reset (active low)
+#define IOEXP_BMP_PWR       10  // Output: BMP3xx power (D1Pro only)
+#define IOEXP_TCXO_VER      11  // [INPUT]: TCXO version detect - triggers INT
 
 #endif // ESP32_MAIN_MCU
 
